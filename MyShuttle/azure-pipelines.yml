@@ -1,0 +1,70 @@
+pool:
+  name: Azure Pipelines
+  demands: maven
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:  
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: 'windows-2019' 
+    steps:
+    - task: Maven@3
+      inputs:
+        mavenPomFile: 'pom.xml'
+        options: '-DskipITs --settings ./maven/settings.xml -Dmaven.test.skip=true'
+        publishJUnitResults: false
+        javaHomeOption: 'JDKVersion'
+        mavenVersionOption: 'Default'
+        mavenAuthenticateFeed: false
+        effectivePomSkip: false
+        sonarQubeRunAnalysis: false
+    
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(build.sourcesdirectory)'
+        Contents: |
+          **/target/*.war
+          *.sql
+        TargetFolder: '$(build.artifactstagingdirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact'
+      inputs:
+        PathtoPublish: '$(build.artifactstagingdirectory)'
+
+
+- stage: Deploy
+  displayName: Deploy db and web app
+  dependsOn: Build
+  jobs:
+    - job: Deployment
+      displayName: Deployment
+      pool:
+        vmImage: 'windows-latest'
+      steps:
+      - task: DownloadBuildArtifacts@1
+        inputs:
+          buildType: 'current'
+          downloadType: 'single'
+          downloadPath: '$(System.ArtifactsDirectory)'
+
+      - task: MysqlDeploymentOnMachineGroup@1
+        inputs:
+          TaskNameSelector: 'SqlTaskFile'
+          SqlFile: '$(System.ArtifactsDirectory)/**/CreateMYSQLDB.sql'
+          ServerName: '$(SERVERNAME).mysql.database.azure.com'
+          DatabaseName: 'alm'
+          SqlUsername: '$(SQLUSERNAME)'
+          SqlPassword: '$(SQLPASSWORD)'
+      
+      
+      - task: AzureRmWebAppDeployment@4
+        inputs:
+          ConnectionType: 'AzureRM'
+          azureSubscription: 'MyShuttleConnection'
+          appType: 'webApp'
+          WebAppName: '$(WEBAPPNAME)'
+          packageForLinux: '$(System.ArtifactsDirectory)/**/*.war'

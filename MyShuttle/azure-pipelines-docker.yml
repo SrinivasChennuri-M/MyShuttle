@@ -1,0 +1,88 @@
+pool:
+  name: Azure Pipelines
+  demands: maven
+
+stages:
+- stage: Build
+  displayName: MyShuttle Docker Build
+  jobs:
+  - job: Build
+    displayName: Buld
+    pool:
+      vmImage: 'ubuntu-latest' 
+    steps:
+    - task: Maven@3
+      displayName: 'Maven pom.xml'
+      inputs:
+        options: '-DskipITs --settings ./maven/settings.xml -Dmaven.test.skip=true'
+        publishJUnitResults: false
+
+    - task: CopyFiles@2
+      inputs:
+        SourceFolder: '$(build.sourcesdirectory)'
+        Contents: |
+          target/myshuttledev*.war
+          *.sql
+        TargetFolder: '$(build.artifactstagingdirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Artifact: drop'
+      inputs:
+        PathtoPublish: '$(build.artifactstagingdirectory)'
+
+    - task: Docker@1
+      displayName: 'Build an image'
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscriptionEndpoint: 'Visual Studio Enterprise Subscription – MPN(b6f408e9-b240-412d-b83d-1ec4fc938ee8)'
+        azureContainerRegistry: '$(AZURECONTAINERREGISTRY).azurecr.io'
+        command: 'Build an image'
+        dockerFile: 'src/Dockerfile'
+        imageName: 'web:$(Build.BuildNumber)'
+        includeLatestTag: true
+        useDefaultContext: false
+        buildContext: '.'
+
+    - task: Docker@1
+      displayName: 'Push an image'
+      inputs:
+        containerregistrytype: 'Azure Container Registry'
+        azureSubscriptionEndpoint: 'Visual Studio Enterprise Subscription – MPN(b6f408e9-b240-412d-b83d-1ec4fc938ee8)'
+        azureContainerRegistry: '$(AZURECONTAINERREGISTRY).azurecr.io'
+        command: 'Push an image'
+        imageName: 'Web:$(Build.BuildNumber)'
+
+
+- stage: Deploy
+  displayName: Deploy db and web app
+  dependsOn: Build
+  jobs:
+    - job: Deployment
+      displayName: Deployment
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+      - task: DownloadBuildArtifacts@1
+        inputs:
+          buildType: 'current'
+          downloadType: 'single'
+          downloadPath: '$(System.ArtifactsDirectory)'
+
+      - task: AzureMysqlDeployment@1
+        displayName: 'Execute Azure MySQL : SqlTaskFile'
+        inputs:
+          azureSubscription: 'Visual Studio Enterprise Subscription – MPN (b6f408e9-b240-412d-b83d-1ec4fc938ee8)'
+          ServerName: fabrikamappfortest.mysql.database.azure.com
+          DatabaseName: alm
+          SqlUsername: '$(DBUSER)'
+          SqlPassword: '$(DBPASSWORD)'
+          SqlFile: '$(System.DefaultWorkingDirectory)/_MyShuttle/CreateMYSQLDB.sql'
+
+      - task: AzureRmWebAppDeployment@4
+        inputs:
+          ConnectionType: 'AzureRM'
+          azureSubscription: 'Visual Studio Enterprise Subscription – MPN(b6f408e9-b240-412d-b83d-1ec4fc938ee8)'
+          appType: 'webAppContainer'
+          WebAppName: '$(WEBAPPNAME)'
+          DockerNamespace: '$(DOCKERNAMESPACE).azurecr.io'
+          DockerRepository: 'web'
